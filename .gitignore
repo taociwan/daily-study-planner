@@ -1,0 +1,21 @@
+# 虚拟环境
+venv/
+.venv/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+
+# 运行时生成的数据与日志
+study_planner.db
+study_planner.db.bak-*
+server.log
+server.pid
+
+# macOS 系统文件
+.DS_Store
+._*
+
+# 编辑器
+.idea/
+.vscode/
