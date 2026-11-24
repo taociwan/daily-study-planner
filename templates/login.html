@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>登录 - 每日学习计划</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="auth-body">
+  <div class="auth-card">
+    <div class="logo">📚</div>
+    <h1>每日学习计划</h1>
+    <p class="subtitle">规划你的 24 小时，开启高效一天</p>
+
+    <form id="loginForm" novalidate>
+      <label for="name">姓名</label>
+      <input type="text" id="name" placeholder="请输入你的姓名" autocomplete="name" required>
+
+      <label for="age">年龄</label>
+      <input type="number" id="age" placeholder="请输入年龄" min="1" max="120" required>
+
+      <label>性别</label>
+      <div class="gender-group">
+        <label class="gender-option">
+          <input type="radio" name="gender" value="male" checked>
+          <span>👦 男</span>
+        </label>
+        <label class="gender-option">
+          <input type="radio" name="gender" value="female">
+          <span>👧 女</span>
+        </label>
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-block">登 录</button>
+      <div id="error" class="error"></div>
+    </form>
+  </div>
+
+  <script src="/static/js/login.js"></script>
+</body>
+</html>
