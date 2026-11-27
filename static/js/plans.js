@@ -1,21 +1,5 @@
-const user = JSON.parse(localStorage.getItem('user') || 'null');
-if (!user) {
-  window.location.href = '/';
-}
-
-const $ = (id) => document.getElementById(id);
+// 今日计划模块：每日计划、计时器、提醒、长期目标
 const COMPLETE_RATIO = 0.80; // 完成计划时长的 80% 即认定完成
-
-function localDateStr(d = new Date()) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function currentTimeStr() {
-  return new Date().toTimeString().slice(0, 5);
-}
 
 let selectedDate = localDateStr();
 let plans = [];
@@ -23,10 +7,10 @@ let goals = [];
 let editingPlanId = null;
 let editingGoalId = null;
 const WEEKDAY_CN = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-const activeTimers = new Map(); // id -> { interval, update }
-const planStartTs = new Map();  // id -> 开始时间戳(ms)
-const marked80 = new Set();     // 已触发 80% 认定完成的计划
-const reminded = new Set();     // 已弹出提醒的计划（本次页面会话）
+const activeTimers = new Map();
+const planStartTs = new Map();
+const marked80 = new Set();
+const reminded = new Set();
 let reminderQueue = [];
 let reminderOpen = false;
 let currentReminderPlan = null;
@@ -39,21 +23,10 @@ const STATUS = {
 };
 
 // ---------------- 工具函数 ----------------
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
 function sourceBadge(plan) {
-  if (plan.source === 'goal') {
-    return '<span class="badge badge-goal" title="来自长期目标">目标</span>';
-  }
-  if (plan.source === 'history') {
-    return '<span class="badge badge-auto" title="根据历史习惯自动生成">习惯</span>';
-  }
+  if (plan.source === 'goal') return '<span class="badge badge-goal" title="来自长期目标">目标</span>';
+  if (plan.source === 'history') return '<span class="badge badge-auto" title="根据历史习惯自动生成">习惯</span>';
+  if (plan.source === 'ai') return '<span class="badge badge-ai" title="来自 AI 复盘建议">AI</span>';
   return '';
 }
 
@@ -111,19 +84,10 @@ function playSound() {
   } catch (e) {}
 }
 
-function showToast(msg) {
-  const el = $('toast');
-  el.textContent = msg;
-  el.classList.add('show');
-  clearTimeout(el._t);
-  el._t = setTimeout(() => el.classList.remove('show'), 2500);
-}
-
 // ---------------- 数据加载 ----------------
 async function loadPlans() {
   try {
-    const res = await fetch(`/api/plans?user_id=${user.id}&date=${selectedDate}`);
-    plans = await res.json();
+    plans = await apiFetch(`/api/plans?date=${selectedDate}`);
   } catch (e) {
     plans = [];
   }
@@ -132,6 +96,7 @@ async function loadPlans() {
   renderList();
   syncTimers();
   checkReminders();
+  checkDayCelebration();
 }
 
 // ---------------- 渲染：统计 ----------------
@@ -207,7 +172,6 @@ function renderList() {
             <span class="countdown" data-countdown="${plan.id}"></span>
           </div>`;
       } else if (plan.status === 'completed') {
-        // 已认定完成但仍在计划时间窗口内（80%~100%），继续显示倒计时
         const stillRunning = plan.plan_date === localDateStr() && plan.end_time > currentTimeStr();
         if (stillRunning) {
           right = `
@@ -258,7 +222,7 @@ function renderList() {
 // ---------------- 计时器 ----------------
 function startCountdown(plan) {
   if (activeTimers.has(plan.id)) return;
-  if (plan.status === 'completed') marked80.add(plan.id); // 恢复阶段不再重复触发 80% 声音
+  if (plan.status === 'completed') marked80.add(plan.id);
 
   const startTs = planStartTs.get(plan.id) || startedAtTs(plan) || Date.now();
   planStartTs.set(plan.id, startTs);
@@ -276,13 +240,10 @@ function startCountdown(plan) {
     if (countEl) countEl.textContent = remaining > 0 ? '剩余 ' + formatUsed(remaining) : '完成';
     if (barEl) barEl.style.width = Math.min(100, (elapsed / total) * 100) + '%';
 
-    // 达到 80%：认定完成，但计时继续到 100%
     if (elapsed >= threshold && !marked80.has(plan.id)) {
       marked80.add(plan.id);
       markCompleted(plan.id);
     }
-
-    // 到 100%：计时结束，记录最终用时
     if (elapsed >= total) {
       stopCountdown(plan.id);
       finalizePlan(plan.id);
@@ -316,7 +277,6 @@ function syncTimers() {
   plans.filter((p) => p.status === 'in_progress').forEach((p) => {
     if (!activeTimers.has(p.id)) startCountdown(p);
   });
-  // 恢复：今天、已完成但尚未到结束时间的计划（80%~100% 阶段，例如刷新页面后）
   plans
     .filter((p) => p.status === 'completed' && p.plan_date === localDateStr() && p.end_time > now)
     .forEach((p) => {
@@ -325,19 +285,41 @@ function syncTimers() {
   tickActiveTimers();
 }
 
+// ---------------- 庆祝：单任务 / 全天 ----------------
+function celebratePlan(plan) {
+  if (App.celebratedPlans.has(plan.id)) return;
+  App.celebratedPlans.add(plan.id);
+  showCelebration({
+    icon: '🎉',
+    title: '恭喜完成该计划！',
+    text: `「${plan.description}」已完成，继续保持这个节奏！`,
+  });
+}
+
+function checkDayCelebration() {
+  if (selectedDate !== localDateStr()) return;
+  const total = plans.length;
+  const completed = plans.filter((p) => p.status === 'completed').length;
+  if (total > 0 && completed === total && !App.celebratedDay) {
+    App.celebratedDay = true;
+    setTimeout(() => {
+      showCelebration({
+        icon: '🏆',
+        title: '恭喜完成今天的全部任务！',
+        text: `今天 ${total} 项计划全部搞定，你太棒了，好好奖励自己一下吧！`,
+      });
+    }, 600);
+  }
+}
+
 // ---------------- 交互 ----------------
 async function startPlan(id) {
   let data = {};
   try {
-    const res = await fetch(`/api/plans/${id}/start`, { method: 'POST' });
-    data = await res.json();
-    if (!res.ok) {
-      showToast(data.error || '无法开始计划');
-      await loadPlans();
-      return;
-    }
+    data = await apiFetch(`/api/plans/${id}/start`, { method: 'POST' });
   } catch (e) {
-    showToast('网络错误，请重试');
+    showToast(e.message || '无法开始计划');
+    await loadPlans();
     return;
   }
   planStartTs.set(id, Date.now());
@@ -346,7 +328,6 @@ async function startPlan(id) {
 }
 
 async function markCompleted(id) {
-  playSound();
   try {
     const res = await fetch(`/api/plans/${id}/complete`, { method: 'POST' });
     const data = await res.json();
@@ -355,6 +336,7 @@ async function markCompleted(id) {
       plan.status = 'completed';
       plan.completed_at = data.completed_at;
       plan.elapsed_seconds = data.elapsed_seconds;
+      celebratePlan(plan);
     }
   } catch (e) {}
   renderList();
@@ -376,7 +358,7 @@ async function deletePlan(id) {
   if (editingPlanId === id) resetAddForm();
   stopCountdown(id);
   try {
-    await fetch(`/api/plans/${id}`, { method: 'DELETE' });
+    await apiFetch(`/api/plans/${id}`, { method: 'DELETE' });
   } catch (e) {}
   await loadPlans();
 }
@@ -385,14 +367,9 @@ async function closePlan(id) {
   if (!confirm('结束该任务？将标记为未完成并保留记录。')) return;
   stopCountdown(id);
   try {
-    const res = await fetch(`/api/plans/${id}/close`, { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok) {
-      showToast(data.error || '操作失败');
-      return;
-    }
+    await apiFetch(`/api/plans/${id}/close`, { method: 'POST' });
   } catch (e) {
-    showToast('网络错误，请重试');
+    showToast(e.message || '操作失败');
     return;
   }
   await loadPlans();
@@ -442,18 +419,13 @@ async function submitPostpone() {
   }
 
   try {
-    const res = await fetch(`/api/plans/${id}/postpone`, {
+    await apiFetch(`/api/plans/${id}/postpone`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ date: planDate, start_time: startTime, end_time: endTime }),
     });
-    const data = await res.json();
-    if (!res.ok) {
-      err.textContent = data.error || '延顺失败';
-      return;
-    }
   } catch (e) {
-    err.textContent = '网络错误，请重试';
+    err.textContent = e.message || '延顺失败';
     return;
   }
 
@@ -465,7 +437,7 @@ async function submitPostpone() {
 
 // ---------------- 提醒弹窗 ----------------
 function checkReminders() {
-  if (selectedDate !== localDateStr()) return; // 只提醒今天的计划
+  if (selectedDate !== localDateStr()) return;
   const now = currentTimeStr();
   plans
     .filter((p) => p.status === 'planned' && p.end_time > now && !reminded.has(p.id) && p.start_time <= now)
@@ -544,13 +516,7 @@ async function addPlan() {
     return;
   }
 
-  const payload = {
-    user_id: user.id,
-    date: selectedDate,
-    start_time: startTime,
-    end_time: endTime,
-    description,
-  };
+  const payload = { date: selectedDate, start_time: startTime, end_time: endTime, description };
   const editing = editingPlanId;
   if (editing) {
     const clash = plans.find((p) => p.id !== editing && p.start_time === startTime);
@@ -561,21 +527,16 @@ async function addPlan() {
   }
 
   try {
-    const res = await fetch(editing ? `/api/plans/${editing}` : '/api/plans', {
+    await apiFetch(editing ? `/api/plans/${editing}` : '/api/plans', {
       method: editing ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    const data = await res.json();
-    if (!res.ok) {
-      err.textContent = data.error || (editing ? '保存失败' : '添加失败');
-      return;
-    }
     resetAddForm();
     await loadPlans();
     showToast(editing ? '✅ 已保存修改' : '✅ 已添加计划');
   } catch (e) {
-    err.textContent = '网络错误，请重试';
+    err.textContent = e.message || '保存失败';
   }
 }
 
@@ -588,9 +549,7 @@ const GOAL_STATUS = {
 
 async function loadGoals() {
   try {
-    const res = await fetch(`/api/goals?user_id=${user.id}`);
-    const data = await res.json();
-    goals = Array.isArray(data) ? data : [];
+    goals = await apiFetch('/api/goals');
   } catch (e) {
     goals = [];
   }
@@ -642,9 +601,7 @@ function resetGoalForm() {
   $('goalEndDate').value = localDateStr(end);
   $('goalStartTime').value = '';
   $('goalEndTime').value = '';
-  document.querySelectorAll('#goalWeekdayChips input').forEach((x) => {
-    x.checked = true;
-  });
+  document.querySelectorAll('#goalWeekdayChips input').forEach((x) => { x.checked = true; });
   $('goalAddBtn').textContent = '添加长期目标';
   $('goalFormTitle').textContent = '＋ 新建长期目标';
   $('goalEditHint').classList.add('hidden');
@@ -689,58 +646,26 @@ async function addGoal() {
   const end_time = $('goalEndTime').value;
   const weekdays = [...document.querySelectorAll('#goalWeekdayChips input:checked')].map((x) => Number(x.value));
 
-  if (!title) {
-    err.textContent = '请填写目标名称';
-    return;
-  }
-  if (!start_date || !end_date) {
-    err.textContent = '请选择开始日期和结束日期';
-    return;
-  }
-  if (end_date < start_date) {
-    err.textContent = '结束日期不能早于开始日期';
-    return;
-  }
-  if (!start_time || !end_time) {
-    err.textContent = '请填写每日开始和结束时间';
-    return;
-  }
-  if (end_time <= start_time) {
-    err.textContent = '结束时间必须晚于开始时间';
-    return;
-  }
-  if (!weekdays.length) {
-    err.textContent = '请至少选择一个执行日';
-    return;
-  }
+  if (!title) { err.textContent = '请填写目标名称'; return; }
+  if (!start_date || !end_date) { err.textContent = '请选择开始日期和结束日期'; return; }
+  if (end_date < start_date) { err.textContent = '结束日期不能早于开始日期'; return; }
+  if (!start_time || !end_time) { err.textContent = '请填写每日开始和结束时间'; return; }
+  if (end_time <= start_time) { err.textContent = '结束时间必须晚于开始时间'; return; }
+  if (!weekdays.length) { err.textContent = '请至少选择一个执行日'; return; }
 
   const editing = editingGoalId;
   try {
-    const res = await fetch(editing ? `/api/goals/${editing}` : '/api/goals', {
+    await apiFetch(editing ? `/api/goals/${editing}` : '/api/goals', {
       method: editing ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        user_id: user.id,
-        title,
-        daily_task,
-        start_date,
-        end_date,
-        start_time,
-        end_time,
-        weekdays,
-      }),
+      body: JSON.stringify({ title, daily_task, start_date, end_date, start_time, end_time, weekdays }),
     });
-    const data = await res.json();
-    if (!res.ok) {
-      err.textContent = data.error || '保存失败';
-      return;
-    }
     resetGoalForm();
     await loadGoals();
     await loadPlans();
     showToast(editing ? '✅ 已保存目标，未来计划重新安排' : '✅ 已添加长期目标，每日计划已生成');
   } catch (e) {
-    err.textContent = '网络错误，请重试';
+    err.textContent = e.message || '保存失败';
   }
 }
 
@@ -748,7 +673,7 @@ async function deleteGoal(id) {
   if (!confirm('删除这个长期目标吗？今天起未开始的目标计划会一并删除，已完成记录保留。')) return;
   if (editingGoalId === id) resetGoalForm();
   try {
-    await fetch(`/api/goals/${id}`, { method: 'DELETE' });
+    await apiFetch(`/api/goals/${id}`, { method: 'DELETE' });
   } catch (e) {}
   await loadGoals();
   await loadPlans();
@@ -766,18 +691,13 @@ async function regeneratePlans() {
   }
   if (!confirm('将重新生成这一天的自动计划；手动修改、进行中、已完成的计划会保留。继续？')) return;
   try {
-    const res = await fetch('/api/plans/generate', {
+    await apiFetch('/api/plans/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: user.id, date: selectedDate }),
+      body: JSON.stringify({ date: selectedDate }),
     });
-    const data = await res.json();
-    if (!res.ok) {
-      showToast(data.error || '生成失败');
-      return;
-    }
   } catch (e) {
-    showToast('网络错误，请重试');
+    showToast(e.message || '生成失败');
     return;
   }
   await loadGoals();
@@ -786,10 +706,7 @@ async function regeneratePlans() {
 }
 
 // ---------------- 初始化 ----------------
-function init() {
-  const genderText = user.gender === 'male' ? '男' : '女';
-  $('userName').textContent = user.name;
-  $('userMeta').textContent = `${user.age} 岁 · ${genderText}`;
+function initPlans() {
   $('datePicker').value = selectedDate;
   updateRegenButton();
 
@@ -801,20 +718,12 @@ function init() {
   });
   $('addBtn').addEventListener('click', addPlan);
   $('cancelEdit').addEventListener('click', cancelEdit);
-  $('description').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') addPlan();
-  });
+  $('description').addEventListener('keydown', (e) => { if (e.key === 'Enter') addPlan(); });
   $('regenBtn').addEventListener('click', regeneratePlans);
-  $('logout').addEventListener('click', () => {
-    localStorage.removeItem('user');
-    window.location.href = '/';
-  });
 
   $('goalAddBtn').addEventListener('click', addGoal);
   $('goalCancelEdit').addEventListener('click', cancelGoalEdit);
-  $('goalTitle').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') addGoal();
-  });
+  $('goalTitle').addEventListener('keydown', (e) => { if (e.key === 'Enter') addGoal(); });
 
   $('postponeCancel').addEventListener('click', closePostpone);
   $('postponeConfirm').addEventListener('click', submitPostpone);
@@ -826,7 +735,6 @@ function init() {
     if (plan) startPlan(plan.id);
   });
 
-  // 首次交互后允许音频播放（浏览器自动播放策略）
   document.addEventListener('pointerdown', () => {
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
   }, { once: true });
@@ -834,10 +742,7 @@ function init() {
   resetGoalForm();
   loadGoals();
   loadPlans();
-  setInterval(() => {
-    loadPlans();
-    loadGoals();
-  }, 10000); // 每 10 秒刷新并检查提醒
+  setInterval(() => { loadPlans(); loadGoals(); }, 10000);
 }
 
-init();
+document.addEventListener('DOMContentLoaded', initPlans);

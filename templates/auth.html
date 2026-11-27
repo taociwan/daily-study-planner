@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>登录 - 每日学习计划</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>">
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="auth-body">
+  <div class="auth-card">
+    <div class="logo">📚</div>
+    <h1>每日学习计划</h1>
+    <p class="subtitle">规划你的 24 小时，开启高效一天</p>
+
+    <div class="auth-tabs">
+      <button type="button" class="auth-tab active" data-mode="login">登 录</button>
+      <button type="button" class="auth-tab" data-mode="register">注 册</button>
+    </div>
+
+    <form id="authForm" novalidate>
+      <div class="field">
+        <label for="username">用户名</label>
+        <input type="text" id="username" placeholder="3-20 位字母、数字或下划线" autocomplete="username" required>
+      </div>
+
+      <div class="field">
+        <label for="password">密码</label>
+        <input type="password" id="password" placeholder="请输入密码" autocomplete="current-password" required>
+      </div>
+
+      <div id="registerFields" class="hidden">
+        <div class="field">
+          <label for="confirmPassword">确认密码</label>
+          <input type="password" id="confirmPassword" placeholder="再次输入密码" autocomplete="new-password">
+        </div>
+        <div class="field">
+          <label for="name">昵称</label>
+          <input type="text" id="name" placeholder="请输入昵称">
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label for="age">年龄</label>
+            <input type="number" id="age" placeholder="年龄" min="1" max="120">
+          </div>
+          <div class="field">
+            <label>性别</label>
+            <div class="gender-group">
+              <label class="gender-option">
+                <input type="radio" name="gender" value="male" checked>
+                <span>👦 男</span>
+              </label>
+              <label class="gender-option">
+                <input type="radio" name="gender" value="female">
+                <span>👧 女</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <button type="submit" id="submitBtn" class="btn btn-primary btn-block">登 录</button>
+      <div id="error" class="error"></div>
+    </form>
+  </div>
+
+  <script src="/static/js/auth.js"></script>
+</body>
+</html>
